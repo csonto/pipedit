@@ -1,0 +1,163 @@
+#!/bin/bash
+
+VERSION="0.1"
+
+message() {
+  echo "# PIPEDIT: $*" >&2
+}
+
+fatal() {
+  local rc=$1
+  shift
+  echo "# FATAL: $*" >&2
+  exit $rc
+}
+
+run() {
+  "$@" <&2 >&2
+}
+
+usage() {
+  local fn=$(basename "$0")
+  if [[ "$fn" == "pipedit" ]]; then
+    cat <<END
+Usage: $fn EDITOR [EDITOR_OPTIONS]
+       $fn OPTIONS
+
+This will read stdin, run the EDITOR and print edited file to stdout.
+
+vi, nano, vim, gvim and emacs should work without problems.
+
+Other editors may work too, just make sure your editor does not fork but
+blocks until you save and exit.
+
+Options:
+
+  -h, --help    print this message
+  --links       make symbolic links for few supported editors
+  --version     print version information
+
+END
+  else
+    local editor=$(get_editor $fn)
+    cat <<END
+Usage: $fn [EDITOR_OPTIONS]
+
+This will read stdin, run $editor editor and print edited file to stdout.
+
+END
+  fi
+}
+
+get_editor() {
+  local editor=
+  if [[ "$1" == "pipevi" ]]; then
+    editor=vi
+  elif [[ "$1" == "pipevim" ]]; then
+    editor=vim
+  elif [[ "$1" == "pipegvim" ]]; then
+    editor=gvim
+  elif [[ "$1" == "pipemacs" ]]; then
+    editor=emacs
+  else
+    fatal 1 "Do not understad '$1'."
+  fi
+  echo $editor
+}
+
+
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+  usage
+  exit 0
+fi
+
+
+if [[ "$1" == "--version" ]]; then
+  cat <<END
+pipedit, version $VERSION
+Copyright (C) 2011 Marian Csontos <mcsontos@redhat.com>
+License GPLv2+: GNU GPL version 2 or later <http://gnu.org/licenses/gpl.html>
+
+This is free software; you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+END
+  exit 0
+fi
+
+
+make_links() {
+  local answ=0
+  local pipedit=$(which pipedit)
+  if [[ -z $pipedit ]]; then
+    if [[ -x ./pipedit ]]; then
+      pipedit=pipedit
+    else
+      fatal 1 "Can not find pipedit executable."
+    fi
+  fi
+  for name in pipevi pipevim pipegvim pipemacs; do
+    if [[ -f $name ]]; then
+      message "INFO: '$name' already exists."
+      message "INFO:   '$(ls -ld $name)'."
+    else
+      if ln -s $pipedit $name; then
+        message "INFO: '$name' link was created."
+      else
+        message "WARN: Could not create '$name' link."
+        answ=1
+      fi
+    fi
+  done
+  return answ
+}
+
+
+if [[ "$1" == "--links" ]]; then
+  make_links
+  exit $?
+fi
+
+
+basebin=$(basename $0)
+if [[ "$basebin" == "pipedit" ]]; then
+  editor=$1
+  shift
+else
+  editor=$(get_editor $basebin)
+fi
+
+
+if [[ "$editor" == "gvim" ]]; then
+  # gvim requires -f option not to fork!
+  editor="gvim -f"
+
+#elif [[ "$editor" == "nano" || "$editor" == "vi" || "$editor" == "vim" || "$editor" == "rvim" || "$editor" == "emacs" ]]; then
+#  # these editors works without any tweaking
+#  true
+
+#else
+#  # other editors may work too...
+#  message "Not sure this will work, trying anyway..."
+#  message "NOTE: Make sure your editor does not fork and runs in foreground."
+#  run read -p "Press <Enter> to continue..."
+#  true
+
+fi
+
+tempf=$(mktemp)
+message "Editing temp file '$tempf' using '$editor'."
+cat > $tempf
+
+run $editor "$@" $tempf
+rc=$?
+if [[ "$rc" != "0" ]]; then
+  fatal $rc "Editor failed. RC=$rc'"
+fi
+
+if [[ -f $tempf ]]; then
+  cat $tempf
+  rm -f $tempf
+else
+  fatal 4 "Temporary file '$tempf' was removed while editing!"
+fi
+
